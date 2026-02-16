@@ -4,10 +4,11 @@ Main REST API service - handles sensors, readings, and proxies to other services
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 
-import psycopg2
-import psycopg2.extras
+import pymysql
+import pymysql.cursors
 import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -18,10 +19,11 @@ CORS(app)
 # Database connection config
 DB_CONFIG = {
     "host": os.environ.get("DB_HOST", "sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com"),
-    "port": os.environ.get("DB_PORT", "5432"),
+    "port": int(os.environ.get("DB_PORT", "3306")),
     "database": os.environ.get("DB_NAME", "acoustileak"),
-    "user": os.environ.get("DB_USER", "postgres"),
-    "password": os.environ.get("DB_PASSWORD", "postgres"),
+    "user": os.environ.get("DB_USER", "admin"),
+    "password": os.environ.get("DB_PASSWORD", "password"),
+    "cursorclass": pymysql.cursors.DictCursor,
 }
 
 # Internal service URLs
@@ -31,7 +33,26 @@ ALERT_SERVICE_URL = os.environ.get("ALERT_SERVICE_URL", "http://alert-service:50
 
 def get_db():
     """Get a database connection."""
-    return psycopg2.connect(**DB_CONFIG)
+    return pymysql.connect(**DB_CONFIG)
+
+
+def serialize_row(row):
+    """Convert a row dict so all values are JSON-serializable."""
+    if row is None:
+        return None
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, Decimal):
+            out[k] = float(v)
+        elif isinstance(v, (datetime, date)):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+def serialize_rows(rows):
+    return [serialize_row(r) for r in rows]
 
 
 # ──────────────────────────────────────────────
@@ -63,9 +84,9 @@ def get_sensors():
     """List all sensors."""
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM sensors ORDER BY id")
-        sensors = cur.fetchall()
+        sensors = serialize_rows(cur.fetchall())
         cur.close()
         conn.close()
         return jsonify(sensors)
@@ -78,9 +99,9 @@ def get_sensor(sensor_id):
     """Get a single sensor by ID."""
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM sensors WHERE id = %s", (sensor_id,))
-        sensor = cur.fetchone()
+        sensor = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
         if not sensor:
@@ -101,10 +122,10 @@ def create_sensor():
 
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """INSERT INTO sensors (sensor_name, pipeline_id, location_lat, location_lng, location_description, status)
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             (
                 data["sensor_name"],
                 data["pipeline_id"],
@@ -114,8 +135,10 @@ def create_sensor():
                 data.get("status", "active"),
             ),
         )
-        sensor = cur.fetchone()
         conn.commit()
+        sensor_id = cur.lastrowid
+        cur.execute("SELECT * FROM sensors WHERE id = %s", (sensor_id,))
+        sensor = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
         return jsonify(sensor), 201
@@ -129,15 +152,14 @@ def update_sensor(sensor_id):
     data = request.get_json()
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """UPDATE sensors
                SET sensor_name = COALESCE(%s, sensor_name),
                    pipeline_id = COALESCE(%s, pipeline_id),
                    location_description = COALESCE(%s, location_description),
-                   status = COALESCE(%s, status),
-                   updated_at = NOW()
-               WHERE id = %s RETURNING *""",
+                   status = COALESCE(%s, status)
+               WHERE id = %s""",
             (
                 data.get("sensor_name"),
                 data.get("pipeline_id"),
@@ -146,8 +168,9 @@ def update_sensor(sensor_id):
                 sensor_id,
             ),
         )
-        sensor = cur.fetchone()
         conn.commit()
+        cur.execute("SELECT * FROM sensors WHERE id = %s", (sensor_id,))
+        sensor = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
         if not sensor:
@@ -168,7 +191,7 @@ def get_readings():
 
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
 
         if sensor_id:
             cur.execute(
@@ -181,7 +204,7 @@ def get_readings():
                 (limit,),
             )
 
-        readings = cur.fetchall()
+        readings = serialize_rows(cur.fetchall())
         cur.close()
         conn.close()
         return jsonify(readings)
@@ -210,12 +233,12 @@ def analyze_audio():
 
         # Store the reading
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """INSERT INTO audio_readings
                (sensor_id, duration_seconds, sample_rate, peak_frequency_hz,
                 avg_amplitude, high_freq_energy, noise_floor, leak_confidence, classification)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 data["sensor_id"],
                 analysis.get("duration_seconds", 1.0),
@@ -228,8 +251,10 @@ def analyze_audio():
                 analysis.get("classification", "normal"),
             ),
         )
-        reading = cur.fetchone()
         conn.commit()
+        reading_id = cur.lastrowid
+        cur.execute("SELECT * FROM audio_readings WHERE id = %s", (reading_id,))
+        reading = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
 
@@ -293,7 +318,7 @@ def dashboard():
     """Aggregated dashboard data for the frontend."""
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
 
         # Sensor counts by status
         cur.execute(
@@ -315,7 +340,7 @@ def dashboard():
                WHERE ar.classification IN ('leak_suspected', 'leak_confirmed')
                ORDER BY ar.timestamp DESC LIMIT 10"""
         )
-        recent_leaks = cur.fetchall()
+        recent_leaks = serialize_rows(cur.fetchall())
 
         cur.close()
         conn.close()

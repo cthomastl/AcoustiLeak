@@ -18,7 +18,7 @@ A full-stack microservices application that uses low-cost microphones attached t
                              │              └──────────────────┘
                              │
                      ┌───────▼────────┐
-                     │  PostgreSQL     │
+                     │  MySQL     │
                      │  (AWS RDS)      │
                      └────────────────┘
 ```
@@ -49,7 +49,7 @@ A full-stack microservices application that uses low-cost microphones attached t
 ### Prerequisites
 
 - Docker and Docker Compose
-- Access to the AWS RDS PostgreSQL instance
+- Access to the AWS RDS MySQL instance
 
 ### 1. Configure Environment
 
@@ -60,12 +60,18 @@ cp .env.example .env
 
 ### 2. Initialize the Database
 
-Run the schema against your RDS instance:
+Create the database and run the schema against your RDS instance:
 
 ```bash
-psql -h sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com \
-     -U postgres -d acoustileak \
-     -f database/schema.sql
+# Create the database
+mysql -h sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com \
+      -u admin -p \
+      -e "CREATE DATABASE IF NOT EXISTS acoustileak;"
+
+# Run the schema
+mysql -h sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com \
+      -u admin -p acoustileak \
+      < database/schema.sql
 ```
 
 ### 3. Start All Services
@@ -124,7 +130,7 @@ AcoustiLeak/
 ├── docker-compose.yml
 ├── .env.example
 ├── database/
-│   └── schema.sql              # PostgreSQL schema + seed data
+│   └── schema.sql              # MySQL schema + seed data (RDS)
 ├── frontend/
 │   ├── Dockerfile
 │   ├── nginx.conf

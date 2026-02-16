@@ -5,10 +5,11 @@ Handles alert creation, acknowledgement, and resolution.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 
-import psycopg2
-import psycopg2.extras
+import pymysql
+import pymysql.cursors
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -18,16 +19,36 @@ CORS(app)
 # Database connection config
 DB_CONFIG = {
     "host": os.environ.get("DB_HOST", "sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com"),
-    "port": os.environ.get("DB_PORT", "5432"),
+    "port": int(os.environ.get("DB_PORT", "3306")),
     "database": os.environ.get("DB_NAME", "acoustileak"),
-    "user": os.environ.get("DB_USER", "postgres"),
-    "password": os.environ.get("DB_PASSWORD", "postgres"),
+    "user": os.environ.get("DB_USER", "admin"),
+    "password": os.environ.get("DB_PASSWORD", "password"),
+    "cursorclass": pymysql.cursors.DictCursor,
 }
 
 
 def get_db():
     """Get a database connection."""
-    return psycopg2.connect(**DB_CONFIG)
+    return pymysql.connect(**DB_CONFIG)
+
+
+def serialize_row(row):
+    """Convert a row dict so all values are JSON-serializable."""
+    if row is None:
+        return None
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, Decimal):
+            out[k] = float(v)
+        elif isinstance(v, (datetime, date)):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+def serialize_rows(rows):
+    return [serialize_row(r) for r in rows]
 
 
 def determine_severity(leak_confidence):
@@ -65,7 +86,7 @@ def get_alerts():
 
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
 
         query = """
             SELECT a.*, s.sensor_name, s.pipeline_id, s.location_description
@@ -89,7 +110,7 @@ def get_alerts():
         params.append(limit)
 
         cur.execute(query, params)
-        alerts = cur.fetchall()
+        alerts = serialize_rows(cur.fetchall())
         cur.close()
         conn.close()
 
@@ -127,14 +148,16 @@ def create_alert():
 
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """INSERT INTO alerts (sensor_id, reading_id, alert_type, severity, message, leak_confidence)
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             (sensor_id, reading_id, alert_type, severity, message, leak_confidence),
         )
-        alert = cur.fetchone()
         conn.commit()
+        alert_id = cur.lastrowid
+        cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+        alert = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
 
@@ -151,15 +174,16 @@ def acknowledge_alert(alert_id):
 
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """UPDATE alerts
                SET acknowledged = TRUE, acknowledged_by = %s, acknowledged_at = NOW()
-               WHERE id = %s RETURNING *""",
+               WHERE id = %s""",
             (acknowledged_by, alert_id),
         )
-        alert = cur.fetchone()
         conn.commit()
+        cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+        alert = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
 
@@ -176,15 +200,16 @@ def resolve_alert(alert_id):
     """Mark an alert as resolved."""
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             """UPDATE alerts
                SET resolved = TRUE, resolved_at = NOW()
-               WHERE id = %s RETURNING *""",
+               WHERE id = %s""",
             (alert_id,),
         )
-        alert = cur.fetchone()
         conn.commit()
+        cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+        alert = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
 
@@ -201,19 +226,19 @@ def alert_stats():
     """Get alert statistics."""
     try:
         conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
 
         cur.execute("""
             SELECT
-                COUNT(*) FILTER (WHERE NOT resolved) AS active_alerts,
-                COUNT(*) FILTER (WHERE resolved) AS resolved_alerts,
-                COUNT(*) FILTER (WHERE severity = 'critical' AND NOT resolved) AS critical_active,
-                COUNT(*) FILTER (WHERE severity = 'high' AND NOT resolved) AS high_active,
-                COUNT(*) FILTER (WHERE NOT acknowledged AND NOT resolved) AS unacknowledged,
+                SUM(CASE WHEN NOT resolved THEN 1 ELSE 0 END) AS active_alerts,
+                SUM(CASE WHEN resolved THEN 1 ELSE 0 END) AS resolved_alerts,
+                SUM(CASE WHEN severity = 'critical' AND NOT resolved THEN 1 ELSE 0 END) AS critical_active,
+                SUM(CASE WHEN severity = 'high' AND NOT resolved THEN 1 ELSE 0 END) AS high_active,
+                SUM(CASE WHEN NOT acknowledged AND NOT resolved THEN 1 ELSE 0 END) AS unacknowledged,
                 COUNT(*) AS total_alerts
             FROM alerts
         """)
-        stats = cur.fetchone()
+        stats = serialize_row(cur.fetchone())
         cur.close()
         conn.close()
 
