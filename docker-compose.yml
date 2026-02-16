@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  # ── Frontend ───────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: http://localhost:5000/api
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - acoustileak
+
+  # ── API Gateway ────────────────────────────
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_HOST=${DB_HOST:-sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-acoustileak}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - AUDIO_PROCESSOR_URL=http://audio-processor:5001
+      - ALERT_SERVICE_URL=http://alert-service:5002
+    depends_on:
+      - audio-processor
+      - alert-service
+    networks:
+      - acoustileak
+
+  # ── Audio Processor ────────────────────────
+  audio-processor:
+    build: ./services/audio-processor
+    ports:
+      - "5001:5001"
+    networks:
+      - acoustileak
+
+  # ── Alert Service ──────────────────────────
+  alert-service:
+    build: ./services/alert-service
+    ports:
+      - "5002:5002"
+    environment:
+      - DB_HOST=${DB_HOST:-sql-db-1.ccdgyuq2ejgs.us-east-1.rds.amazonaws.com}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-acoustileak}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+    networks:
+      - acoustileak
+
+networks:
+  acoustileak:
+    driver: bridge
