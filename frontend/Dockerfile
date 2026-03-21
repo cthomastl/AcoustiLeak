@@ -2,9 +2,10 @@ FROM node:18-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 RUN npm install
 
+COPY tailwind.config.js postcss.config.js ./
 COPY public/ public/
 COPY src/ src/
 

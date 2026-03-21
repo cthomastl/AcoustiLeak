@@ -8,8 +8,8 @@
     "react-scripts": "5.0.1"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build"
+    "start": "npx tailwindcss -i ./src/index.css -o ./src/tailwind.css && react-scripts start",
+    "build": "npx tailwindcss -i ./src/index.css -o ./src/tailwind.css --minify && react-scripts build"
   },
   "proxy": "http://api-gateway:5000",
   "browserslist": {
