@@ -8,25 +8,12 @@
     "react-scripts": "5.0.1"
   },
   "scripts": {
-    "start": "npx tailwindcss -i ./src/index.css -o ./src/tailwind.css && react-scripts start",
-    "build": "npx tailwindcss -i ./src/index.css -o ./src/tailwind.css --minify && react-scripts build"
+    "start": "react-scripts start",
+    "build": "react-scripts build"
   },
   "proxy": "http://api-gateway:5000",
   "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
-  "devDependencies": {
-    "autoprefixer": "^10.4.24",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.19"
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
   }
 }

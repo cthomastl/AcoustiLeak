@@ -5,7 +5,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install
 
-COPY tailwind.config.js postcss.config.js ./
 COPY public/ public/
 COPY src/ src/
 
